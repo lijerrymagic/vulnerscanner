@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 import time
+from pprint import pprint
 from zapv2 import ZAPv2
 
 app = FastAPI()
@@ -39,13 +40,13 @@ async def root():
     #################################
     ### END OF CONFIGURATION AREA ###
     #################################
-
+    ascan = zap.ascan
     if use_scan_policy:
         # remove and add again
-        ascan.remove_scan_policy(scanpolicyname=scan_policy_name)
-        pprint('Add scan policy ' + scan_policy_name + ' -> ' +
-                ascan.add_scan_policy(scanpolicyname=scan_policy_name))
-        for policy_id in range(0, 5):
+        ascan.remove_scan_policy(scanpolicyname=scan_policy_name, apikey=apiKey)
+        pprint('Add scan policy ' + scan_policy_name + ' -> ' + ascan.add_scan_policy(scanpolicyname=scan_policy_name, apikey=apiKey))
+        print(ascan.policies())
+        for policy_id in range(0, 6):
             # Set alert threshold for all scans
             ascan.set_policy_alert_threshold(id=policy_id,
                                              alertthreshold=alert_threshold,
@@ -70,7 +71,7 @@ async def root():
             pprint('Disable given scan IDs -> ' +
                     ascan.disable_scanners(ids=ascan_ids,
                                            scanpolicyname=scan_policy_name))
-        
+        print("Policeis" + str(ascan.policies()))
         # Spider scan
         print('Spidering target {}'.format(target))
         # The scan returns a scan id to support concurrent scanning
@@ -87,19 +88,21 @@ async def root():
 
         # Active scan
         print('Active Scanning target {}'.format(target))
-        active_scan_id = zap.ascan.scan(url=target, recurse=False, scanpolicyname=scan_policy_name)
+        active_scan_id = ascan.scan(url=target, recurse=False, scanpolicyname="Injection")
         print("Active scan starts. Scan ID equals: " + active_scan_id)
         time.sleep(2)
-        while int(zap.ascan.status(active_scan_id)) < 100:
+        while int(ascan.status(active_scan_id)) < 100:
             # Loop until the scanner has finished
-            print('Scan progress %: {}'.format(zap.ascan.status(active_scan_id)))
+            print('Scan progress %: {}'.format(ascan.status(active_scan_id)))
             time.sleep(2)
 
         print('Active Scan completed.')
         # Print vulnerabilities found by the scanning
         alerts = core.alerts(baseurl=target)
-        pprint(alerts)
+        #pprint(alerts)
 
         print('XML report: ')
         xml_report = core.xmlreport()
-    return {"message": alerts}
+
+        html_report = core.htmlreport()
+    return ""
