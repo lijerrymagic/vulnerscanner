@@ -5,10 +5,15 @@ from zapv2 import ZAPv2
 from nmap3 import Nmap
 from urllib import parse
 from pydantic import BaseModel
-
+import requests
 
 class ScanRequest(BaseModel):
     url: str
+
+class PortScanRequest(BaseModel):
+    url: str
+    start_port: int
+    end_port: int
 
 # zap api global object
 zap_apis = None
@@ -74,7 +79,7 @@ def server_init():
 
     # Define an authentication method with parameters for the context
     auth = zap.authentication
-    pprint('Set authentication method: ' + auth_method + ' -> ' +
+    pprint('Set authentication method: ' + auth_method + ' : ' +
             auth.set_authentication_method(contextid=context_id,
                                         authmethodname=auth_method,
                                         authmethodconfigparams=auth_params))
@@ -82,10 +87,10 @@ def server_init():
     
     # Define either a loggedin indicator or a loggedout indicator regexp
     # It allows ZAP to see if the user is always authenticated during scans
-    pprint('Define Loggedin indicator: ' + ' -> ' +
+    pprint('Define Loggedin indicator: ' + ' : ' +
             auth.set_logged_in_indicator(contextid=context_id,
                                     loggedinindicatorregex='Login'))
-    pprint('Define Loggedout indicator: ' + ' -> ' +
+    pprint('Define Loggedout indicator: ' + ' : ' +
             auth.set_logged_out_indicator(contextid=context_id,
                                     loggedoutindicatorregex='Logout'))
     
@@ -102,7 +107,7 @@ def server_init():
             '; credentials -> ' +
             users.set_authentication_credentials(contextid=context_id,
                 userid=user_id,
-                authcredentialsconfigparams='username=bee&password=bug') +
+                authcredentialsconfigparams='username=bee&password=bug1') +
             '; enabled -> ' +
             users.set_user_enabled(contextid=context_id, userid=user_id,
                                     enabled=True))
@@ -152,16 +157,16 @@ def scan(scan_request: ScanRequest):
     target = scan_request.url
 
     # enable forced user
-    pprint('Set user name: ' + user_name + ' for forced user mode -> ' +
-                            zap_apis["forced_user"].set_forced_user(contextid=context_id, userid=user_id))
-    pprint('Set forced user mode disabled -> ' +
+    pprint('Set forced user mode enabled : ' +
                 zap_apis["forced_user"].set_forced_user_mode_enabled(boolean=True))
+    pprint('Set user name: ' + user_name + ' for forced user mode : ' +
+                zap_apis["forced_user"].set_forced_user(contextid=context_id, userid=user_id))
     # Spider scan starts
     print('Spidering target {}'.format(target))
     
     # The spider scan returns a scan id to support concurrent scanning'
-    spider_scan_id = zap_apis["spider"].scan_as_user(contextid=context_id, userid=user_id, url=target, recurse=True, apikey=api_key)
-    # spider_scan_id = zap_apis["spider"].scan(url=target, recurse=True, apikey=api_key)
+    # spider_scan_id = zap_apis["spider"].scan_as_user(contextid=context_id, userid=user_id, url=target, recurse=True, apikey=api_key)
+    spider_scan_id = zap_apis["spider"].scan(url=target, recurse=True, apikey=api_key)
     print("Spider scan starts. Scan ID equals: " + spider_scan_id)
     time.sleep(1)
     while int(zap_apis["spider"].status(spider_scan_id)) < 100:
@@ -172,11 +177,13 @@ def scan(scan_request: ScanRequest):
     # Prints the URLs the spider has crawled
     print('\n'.join(map(str, zap.spider.results(spider_scan_id))))
 
+    pprint('Set forced user mode disabled : ' +
+                    zap_apis["forced_user"].set_forced_user_mode_enabled(boolean=False))
     # Active scan starts
     print('Active Scanning target {}'.format(target))
 
-    active_scan_id = zap_apis["ascan"].scan_as_user(url=target, contextid=context_id, userid=user_id, recurse=True, scanpolicyname=scan_policy_name, apikey=api_key, method=None, postdata=True)
-    # active_scan_id = zap_apis["ascan"].scan(url=target, recurse=True, apikey=api_key, scanpolicyname=scan_policy_name)
+    # active_scan_id = zap_apis["ascan"].scan_as_user(url=target, contextid=context_id, userid=user_id, recurse=True, scanpolicyname=scan_policy_name, apikey=api_key, method=None, postdata=True)
+    active_scan_id = zap_apis["ascan"].scan(url=target, recurse=True, apikey=api_key, scanpolicyname=scan_policy_name)
     print("Active scan starts. Scan ID equals: " + active_scan_id)
     time.sleep(2)
     while int(zap_apis["ascan"].status(active_scan_id)) < 100:
@@ -206,13 +213,48 @@ def scan(scan_request: ScanRequest):
         html_report = zap_apis["core"].htmlreport()
     return res
 
-@app.post("/port-scan")
+@app.post("/dns-scan")
 def port_scan(scan_request: ScanRequest):
     nmap = Nmap()
     parsed_url = parse.urlsplit(scan_request.url)
 
-    # extrac host name from url for port scanning
+    # extract host name from url for port scanning
     host_name = parsed_url.hostname
-    results = nmap.scan_top_ports(host_name)
+    results = nmap.nmap_dns_brute_script(host_name)
     print(results)
     return results
+
+@app.post("/port-scan")
+def port_scan(scan_request: PortScanRequest):
+    nmap = Nmap()
+    start_port = scan_request.start_port
+    end_port = scan_request.end_port
+    parsed_url = parse.urlsplit(scan_request.url)
+    host_name = parsed_url.hostname 
+    if not start_port and not end_port:
+        results = nmap.scan_top_ports(target=host_name)
+    # extrac host name from url for port scanning
+    else:
+        arg_string = " -p {start}-{end} ".format(start=str(start_port), end=str(end_port))
+        results = nmap.scan_command(target=host_name, arg=arg_string)
+    print(results)
+    return results
+
+@app.post("/os-scan")
+def port_scan(scan_request: ScanRequest):
+    nmap = Nmap()
+    parsed_url = parse.urlsplit(scan_request.url)
+    host_name = parsed_url.hostname 
+
+    os_results = nmap.nmap_os_detection(target=host_name)
+    print(os_results)
+    return os_results
+
+def cert_scan(scan_request: ScanRequest):
+    cert_target = "https://www.digicert.com/api/check-host.php"
+    target = scan_request.url
+    payload = {'somekey': 'somevalue'}
+
+    results = requests.post(cert_target, data = payload)
+
+    print(results.text)
