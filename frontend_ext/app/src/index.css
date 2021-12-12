@@ -1,0 +1,16 @@
+* {
+  font-size: 12px;
+}
+
+.btn-back {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  cursor: pointer;
+  
+  background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABmJLR0QA/wD/AP+gvaeTAAAAY0lEQVRIie2UMQqAMBAEJ2Lhs3yR+hTt/I4f89JEBBHiQa4QdiCkCMzkigSEeCGVFSbfgD0icskNOIExUj5J3kzeVc7tEWxOAlbuKWZFahH3Q+sdAQOWsg/A4bzgZ0I/O/FDMq2DH/ZtWe3XAAAAAElFTkSuQmCC") no-repeat;
+  background-position: center;
+  background-size: contain;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "Vulnerscanner",
+  "description": "Vulnerscanner",
+  "version": "1.0",
+  "manifest_version": 3,
+  "icons": {
+    "16": "favicon.ico"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "action": {
+    "default_popup": "index.html"
+  }
+}
