@@ -1,19 +1,24 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 import time
 from pprint import pprint
 from zapv2 import ZAPv2
 from nmap3 import Nmap
+from nmap import PortScanner
 from urllib import parse
 from pydantic import BaseModel
 import requests
+import xmltodict
+import json
+import time
 
 class ScanRequest(BaseModel):
     url: str
 
 class PortScanRequest(BaseModel):
     url: str
-    start_port: int
-    end_port: int
+    start_port: int = None
+    end_port: int = None
 
 # zap api global object
 zap_apis = None
@@ -48,6 +53,7 @@ auth_params = ('loginUrl=http://173.82.151.22:8000/login.php&'
 auth_params_dvwa = ('loginUrl=http://173.82.151.22/login.php&'
 'loginRequestData=username%3D%7B%25username%25%7D%26password%3D%7B%25password%25%7D%26Login%3DLogin%26user_token%3Da796a7ef61434aab17413a72e9bc7b2d')
 
+time_out = 120
 ############# CONFIGURATIONS AREA ENDS ###############
 
 
@@ -155,7 +161,10 @@ zap_apis = server_init()
 @app.post("/scan")
 def scan(scan_request: ScanRequest):
     target = scan_request.url
+    res = {}
 
+    if "localhost" in target or "127.0.0.1" in target:
+        return res
     # enable forced user
     pprint('Set forced user mode enabled : ' +
                 zap_apis["forced_user"].set_forced_user_mode_enabled(boolean=True))
@@ -164,16 +173,26 @@ def scan(scan_request: ScanRequest):
     # Spider scan starts
     print('Spidering target {}'.format(target))
     
+    spider_start = time.perf_counter()
+
     # The spider scan returns a scan id to support concurrent scanning'
     # spider_scan_id = zap_apis["spider"].scan_as_user(contextid=context_id, userid=user_id, url=target, recurse=True, apikey=api_key)
-    spider_scan_id = zap_apis["spider"].scan(url=target, recurse=True, apikey=api_key)
+    spider_scan_id = zap_apis["spider"].scan(url=target, recurse=True, apikey=api_key, maxchildren=30)
     print("Spider scan starts. Scan ID equals: " + spider_scan_id)
     time.sleep(1)
     while int(zap_apis["spider"].status(spider_scan_id)) < 100:
+        spider_process = time.perf_counter()
+        spider_time_taken = spider_process - spider_start
+
+        if spider_time_taken > time_out:
+            zap_apis["spider"].stop(scanid=spider_scan_id, apikey=api_key)
+            return res
         # Poll the status until it completes
         print('Spider progress %: {}'.format(zap.spider.status(spider_scan_id)))
         time.sleep(1)
     print('Spider scan has completed!')
+
+    spider_complete = time.perf_counter()
     # Prints the URLs the spider has crawled
     print('\n'.join(map(str, zap.spider.results(spider_scan_id))))
 
@@ -181,22 +200,29 @@ def scan(scan_request: ScanRequest):
                     zap_apis["forced_user"].set_forced_user_mode_enabled(boolean=False))
     # Active scan starts
     print('Active Scanning target {}'.format(target))
-
+    scan_start = time.perf_counter()
     # active_scan_id = zap_apis["ascan"].scan_as_user(url=target, contextid=context_id, userid=user_id, recurse=True, scanpolicyname=scan_policy_name, apikey=api_key, method=None, postdata=True)
     active_scan_id = zap_apis["ascan"].scan(url=target, recurse=True, apikey=api_key, scanpolicyname=scan_policy_name)
+    if active_scan_id == "url_not_found":
+        return res
     print("Active scan starts. Scan ID equals: " + active_scan_id)
     time.sleep(2)
     while int(zap_apis["ascan"].status(active_scan_id)) < 100:
+        scan_process = time.perf_counter()
+        scan_time_taken = scan_process - scan_start
+        if scan_time_taken > time_out:
+            zap_apis["ascan"].stop(scanid=active_scan_id, apikey=api_key)
+            return res
         # Loop until the scanner has finished
         print('Scan progress %: {}'.format(zap_apis["ascan"].status(active_scan_id)))
         time.sleep(2)
 
     print('Active Scan completed.')
+
     alerts_ids = zap_apis["ascan"].alerts_ids(active_scan_id)
     print(alerts_ids)
 
     # Print and return vulnerabilities found by the scanning
-    res = {}
     for id in alerts_ids:
         alert_detail = zap_apis["core"].alert(id)
         res[id] = alert_detail
@@ -213,31 +239,64 @@ def scan(scan_request: ScanRequest):
         html_report = zap_apis["core"].htmlreport()
     return res
 
-@app.post("/dns-scan")
-def port_scan(scan_request: ScanRequest):
-    nmap = Nmap()
-    parsed_url = parse.urlsplit(scan_request.url)
+# @app.middleware("http")
+# async def add_response_access_control_header(request: Request, call_next):
+#     response = await call_next(request)
+#     if request.method == "OPTIONS":
+#         return response
+#     response.headers["Access-Control-Allow-Origin"] = "*"
+#     return response
 
-    # extract host name from url for port scanning
-    host_name = parsed_url.hostname
-    results = nmap.nmap_dns_brute_script(host_name)
-    print(results)
-    return results
+# handle CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# @app.post("/dns-scan")
+# def port_scan(scan_request: ScanRequest):
+#     nmap = Nmap()
+#     parsed_url = parse.urlsplit(scan_request.url)
+
+#     # extract host name from url for port scanning
+#     host_name = parsed_url.hostname
+#     results = nmap.nmap_dns_brute_script(host_name)
+#     print(results)
+#     return results
+
+@app.post('/dns-scan')
+def dns_new_scan(scan_request: ScanRequest):
+    URL = 'https://www.whoisxmlapi.com/whoisserver/DNSService'
+    PARAMS = {"apiKey": 'at_GngaurozR5even8p1skmLcyS0BzU1',
+              "domainName":scan_request.url,
+              "type": '_all',
+              "outputFormat": 'JSON'
+            }
+    r = requests.get(url = URL, params = PARAMS)
+  
+    # extracting data in json format
+    return r.text
 
 @app.post("/port-scan")
 def port_scan(scan_request: PortScanRequest):
-    nmap = Nmap()
+    nmap3 = Nmap()
     start_port = scan_request.start_port
     end_port = scan_request.end_port
     parsed_url = parse.urlsplit(scan_request.url)
+    # extrac host name from url for port scanning
     host_name = parsed_url.hostname 
     if not start_port and not end_port:
-        results = nmap.scan_top_ports(target=host_name)
-    # extrac host name from url for port scanning
+        results = nmap3.scan_top_ports(target=host_name)
     else:
-        arg_string = " -p {start}-{end} ".format(start=str(start_port), end=str(end_port))
-        results = nmap.scan_command(target=host_name, arg=arg_string)
-    print(results)
+        arg_string = "-p {start}-{end}".format(start=str(start_port), end=str(end_port))
+        nm_scanner = PortScanner()
+        results = nm_scanner.scan(host_name, "{start}-{end}".format(start=start_port, end=end_port))
+        # nmap.scan('127.0.0.1', '21-443')
+        # results = nmap.parser.convert_xml_elements(xml_obj)
+        print(results)
     return results
 
 @app.post("/os-scan")
@@ -246,15 +305,21 @@ def port_scan(scan_request: ScanRequest):
     parsed_url = parse.urlsplit(scan_request.url)
     host_name = parsed_url.hostname 
 
+    
     os_results = nmap.nmap_os_detection(target=host_name)
     print(os_results)
     return os_results
 
-def cert_scan(scan_request: ScanRequest):
+@app.get("/cert-scan/{host}")
+def cert_scan(host: str):
     cert_target = "https://www.digicert.com/api/check-host.php"
-    target = scan_request.url
-    payload = {'somekey': 'somevalue'}
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    target = host
+    payload = {'host': target}
 
-    results = requests.post(cert_target, data = payload)
-
+    results = requests.post(cert_target, data = payload, headers=headers)
     print(results.text)
+    # o = xmltodict.parse(results.text)
+    # json_o = json.dumps(o)
+    return {"result": results.text}
+    
